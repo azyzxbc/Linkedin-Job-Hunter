@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  job-hunter:
+    build: .
+    container_name: linkedin-job-hunter
+    ports:
+      - "8000:8000"       # Change left side to use a different host port e.g. "80:8000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
