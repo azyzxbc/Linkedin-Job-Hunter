@@ -125,6 +125,60 @@ async def search_linkedin(keywords: list[str], location: str, experience: str) -
     return results
 
 
+# ─── LinkedIn hiring posts (recruiter/people posts) ──────────────────────────
+
+async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
+    query_parts = keywords + ([location] if location else [])
+    query = " ".join(query_parts)
+    search_query = f'site:linkedin.com/posts OR site:linkedin.com/in "hiring" OR "we are hiring" OR "looking for" {query}'
+    url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}&num=30&hl=en"
+
+    results = []
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url)
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            for g in soup.select("div.g"):
+                title_el  = g.select_one("h3")
+                link_el   = g.select_one("a")
+                snippet_el = g.select_one("div.VwiC3b, span.aCOpRe, div[data-sncf]")
+
+                if not title_el or not link_el:
+                    continue
+
+                href = link_el.get("href", "")
+                if "linkedin.com" not in href:
+                    continue
+                # Only personal posts / profile pages
+                if not any(p in href for p in ["/posts/", "/in/", "/pulse/"]):
+                    continue
+
+                title   = title_el.get_text(strip=True)
+                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+
+                # Try to extract person name from title (e.g. "John Doe on LinkedIn: ...")
+                person = ""
+                m = re.match(r"^([^|·\-\n]+?)\s+(on LinkedIn|–\s*LinkedIn|posted|shared)", title, re.IGNORECASE)
+                if m:
+                    person = m.group(1).strip()
+                else:
+                    title_clean = re.sub(r"\s*[|\-]\s*LinkedIn.*$", "", title).strip()
+                    person = title_clean
+
+                results.append({
+                    "person":  person,
+                    "title":   title,
+                    "snippet": snippet,
+                    "url":     href,
+                    "posted":  extract_date_from_snippet(snippet),
+                })
+    except Exception as e:
+        print(f"Hiring posts search error: {e}")
+
+    return results
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def extract_company_from_snippet(snippet: str) -> str:
@@ -185,6 +239,24 @@ async def search(
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+@app.get("/api/hiring-posts")
+async def hiring_posts(
+    keywords: str = Query(..., description="Comma-separated keywords"),
+    location: str = Query("Tunisia", description="Location"),
+):
+    kw_list = [k.strip() for k in keywords.split(",") if k.strip()]
+    if not kw_list:
+        return {"results": [], "total": 0, "error": "No keywords provided"}
+
+    results = await search_hiring_posts(kw_list, location)
+
+    return {
+        "results": results,
+        "total": len(results),
+    }
+
 
 
 # ─── Serve frontend ───────────────────────────────────────────────────────────

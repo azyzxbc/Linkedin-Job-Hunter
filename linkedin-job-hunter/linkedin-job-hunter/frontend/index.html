@@ -273,6 +273,56 @@
     text-align: center; padding: 28px 16px;
     font-size: 12px; color: var(--muted);
   }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex; gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 0;
+  }
+  .tab-btn {
+    padding: 8px 18px;
+    border: none; background: none;
+    font-size: 14px; font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 6px 6px 0 0;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--accent); background: var(--accent-light); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Hiring post card ── */
+  .hiring-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    display: flex; gap: 14px; align-items: flex-start;
+    box-shadow: var(--shadow);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    text-decoration: none; color: inherit;
+  }
+  .hiring-card:hover { border-color: #057642; box-shadow: 0 2px 8px rgba(5,118,66,0.1); }
+  .hiring-avatar {
+    width: 44px; height: 44px; flex-shrink: 0;
+    background: var(--success-bg);
+    border-radius: 50%;
+    border: 1px solid #b2dfdb;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; color: var(--success);
+  }
+  .hiring-name { font-size: 14px; font-weight: 600; color: var(--success); margin-bottom: 4px; }
+  .hiring-snippet {
+    font-size: 12px; color: var(--muted); line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .badge-hiring { background: var(--success-bg); color: var(--success); }
+
 </style>
 </head>
 <body>
@@ -340,7 +390,16 @@
   </div>
 
   <div id="statsBar" class="stats-bar" style="display:none;"></div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tabJobs" onclick="switchTab('jobs')">💼 Job Listings</button>
+    <button class="tab-btn" id="tabHiring" onclick="switchTab('hiring')">👥 Hiring Posts</button>
+  </div>
+
   <div id="output"></div>
+  <div id="hiringOutput" style="display:none;"></div>
+
 
 </div>
 
@@ -350,6 +409,17 @@
 
 <script>
   let lastResults = [];
+  let lastHiringResults = [];
+  let activeTab = 'jobs';
+
+  function switchTab(tab) {
+    activeTab = tab;
+    document.getElementById('tabJobs').classList.toggle('active', tab === 'jobs');
+    document.getElementById('tabHiring').classList.toggle('active', tab === 'hiring');
+    document.getElementById('output').style.display       = tab === 'jobs'    ? '' : 'none';
+    document.getElementById('hiringOutput').style.display = tab === 'hiring'  ? '' : 'none';
+    document.getElementById('statsBar').style.display     = tab === 'jobs' && lastResults.length ? 'flex' : 'none';
+  }
 
   function addKeyword(el) {
     const kw = el.textContent.trim();
@@ -377,30 +447,54 @@
     btn.disabled = true;
     btn.textContent = 'Searching...';
 
-    document.getElementById('statsBar').style.display = 'none';
-    document.getElementById('output').innerHTML = `
-      <div class="loading">
-        <div class="spinner"></div>
-        Searching LinkedIn & Google...
-      </div>`;
+    if (activeTab === 'jobs') {
+      document.getElementById('statsBar').style.display = 'none';
+      document.getElementById('output').innerHTML = `
+        <div class="loading"><div class="spinner"></div>Searching LinkedIn &amp; Google...</div>`;
+
+      try {
+        const params = new URLSearchParams({ keywords, location, experience });
+        const res  = await fetch('/api/search?' + params.toString());
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        lastResults = data.results || [];
+        renderStats(data);
+        applyDateFilter();
+      } catch (err) {
+        document.getElementById('output').innerHTML = `
+          <div class="error-box">⚠️ Search error: ${err.message}<br><small>Make sure the backend is running.</small></div>`;
+        document.getElementById('statsBar').style.display = 'none';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Search';
+      }
+    } else {
+      await runHiringSearch();
+      btn.disabled = false;
+      btn.textContent = '🔍 Search';
+    }
+  }
+
+  async function runHiringSearch() {
+    const keywords = document.getElementById('keywordsInput').value.trim();
+    const location = document.getElementById('locationSelect').value;
+    const btn = document.getElementById('searchBtn');
+    btn.disabled = true;
+    btn.textContent = 'Searching...';
+
+    document.getElementById('hiringOutput').innerHTML = `
+      <div class="loading"><div class="spinner"></div>Searching for hiring posts...</div>`;
 
     try {
-      const params = new URLSearchParams({ keywords, location, experience });
-      const res = await fetch('/api/search?' + params.toString());
+      const params = new URLSearchParams({ keywords, location });
+      const res  = await fetch('/api/hiring-posts?' + params.toString());
       const data = await res.json();
-
       if (data.error) throw new Error(data.error);
-
-      lastResults = data.results || [];
-      renderStats(data);
-      applyDateFilter();
+      lastHiringResults = data.results || [];
+      renderHiringResults(lastHiringResults);
     } catch (err) {
-      document.getElementById('output').innerHTML = `
-        <div class="error-box">
-          ⚠️ Search error: ${err.message}<br>
-          <small>Make sure the backend is running. Check the /api/health endpoint.</small>
-        </div>`;
-      document.getElementById('statsBar').style.display = 'none';
+      document.getElementById('hiringOutput').innerHTML = `
+        <div class="error-box">⚠️ Error: ${err.message}</div>`;
     } finally {
       btn.disabled = false;
       btn.textContent = '🔍 Search';
@@ -498,6 +592,35 @@
             <div class="job-arrow">›</div>
           </a>`;
       }).join('') +
+    `</div>`;
+  }
+
+  function renderHiringResults(results) {
+    const out = document.getElementById('hiringOutput');
+    if (!results.length) {
+      out.innerHTML = `
+        <div class="empty">
+          <div class="icon">👥</div>
+          <h3>No hiring posts found</h3>
+          <p>Try different keywords or a broader location.</p>
+        </div>`;
+      return;
+    }
+    out.innerHTML = `<div class="results-wrap">` +
+      results.map(p => `
+        <a class="hiring-card" href="${p.url || '#'}" target="_blank" rel="noopener">
+          <div class="hiring-avatar">${initials(p.person || '?')}</div>
+          <div class="job-body">
+            <div class="hiring-name">👤 ${escHtml(p.person || 'Hiring Manager')}</div>
+            <div class="job-meta">
+              <span class="badge badge-hiring">🤝 Hiring</span>
+              ${p.posted ? `<span class="badge badge-date">🕐 ${escHtml(p.posted)}</span>` : ''}
+            </div>
+            ${p.snippet ? `<div class="hiring-snippet">${escHtml(p.snippet)}</div>` : ''}
+          </div>
+          <div class="job-arrow">›</div>
+        </a>`
+      ).join('') +
     `</div>`;
   }
 
