@@ -323,6 +323,63 @@
   }
   .badge-hiring { background: var(--success-bg); color: var(--success); }
 
+  /* ── CV Match tab ── */
+  .cv-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+  .cv-card label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 8px; color: var(--text); }
+  .cv-card textarea {
+    width: 100%;
+    min-height: 180px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    outline: none;
+    transition: border 0.15s;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .cv-card textarea:focus { border-color: var(--accent); }
+  .cv-card textarea::placeholder { color: #aaa; }
+  .cv-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .cv-actions select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--surface); color: var(--text); outline: none; }
+  .btn-cv {
+    padding: 10px 22px;
+    background: #7c3aed;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-cv:hover { background: #6d28d9; }
+  .btn-cv:disabled { background: #aaa; cursor: not-allowed; }
+  .skills-found {
+    margin-top: 14px;
+  }
+  .skills-found .skills-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .skill-chip {
+    display: inline-block;
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: #ede9fe;
+    color: #7c3aed;
+    border: 1px solid #ddd6fe;
+    margin: 3px;
+  }
 </style>
 </head>
 <body>
@@ -393,12 +450,45 @@
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" id="tabJobs" onclick="switchTab('jobs')">💼 Job Listings</button>
-    <button class="tab-btn" id="tabHiring" onclick="switchTab('hiring')">👥 Hiring Posts</button>
+    <button class="tab-btn active" id="tabJobs"    onclick="switchTab('jobs')">💼 Job Listings</button>
+    <button class="tab-btn"        id="tabHiring"  onclick="switchTab('hiring')">👥 Hiring Posts</button>
+    <button class="tab-btn"        id="tabCV"      onclick="switchTab('cv')">🎯 CV Match</button>
   </div>
 
   <div id="output"></div>
   <div id="hiringOutput" style="display:none;"></div>
+
+  <!-- CV Match section -->
+  <div id="cvSection" style="display:none;">
+    <div class="cv-card">
+      <label for="cvText">📎 Paste your CV / Resume text here</label>
+      <textarea id="cvText" placeholder="Copy and paste the full text of your CV here...
+Example:
+  DevOps Engineer with 4 years experience
+  Skills: AWS, Kubernetes, Terraform, Docker, CI/CD, Python
+  Worked with GitHub Actions, Grafana, Prometheus..."></textarea>
+      <div class="cv-actions">
+        <select id="cvLocation">
+          <option value="Tunisia">📍 Tunisia</option>
+          <option value="Tunis">📍 Tunis</option>
+          <option value="Remote">🌍 Remote</option>
+          <option value="">🌐 Worldwide</option>
+        </select>
+        <select id="cvExp">
+          <option value="">All levels</option>
+          <option value="junior">Junior</option>
+          <option value="mid">Mid</option>
+          <option value="senior">Senior</option>
+        </select>
+        <button class="btn-cv" id="cvBtn" onclick="runCvSearch()">🎯 Find Matching Jobs</button>
+      </div>
+      <div class="skills-found" id="skillsFound" style="display:none;">
+        <div class="skills-label">✨ Skills detected in your CV:</div>
+        <div id="skillChips"></div>
+      </div>
+    </div>
+    <div id="cvOutput"></div>
+  </div>
 
 
 </div>
@@ -414,11 +504,13 @@
 
   function switchTab(tab) {
     activeTab = tab;
-    document.getElementById('tabJobs').classList.toggle('active', tab === 'jobs');
-    document.getElementById('tabHiring').classList.toggle('active', tab === 'hiring');
-    document.getElementById('output').style.display       = tab === 'jobs'    ? '' : 'none';
-    document.getElementById('hiringOutput').style.display = tab === 'hiring'  ? '' : 'none';
-    document.getElementById('statsBar').style.display     = tab === 'jobs' && lastResults.length ? 'flex' : 'none';
+    document.getElementById('tabJobs').classList.toggle('active',    tab === 'jobs');
+    document.getElementById('tabHiring').classList.toggle('active',  tab === 'hiring');
+    document.getElementById('tabCV').classList.toggle('active',      tab === 'cv');
+    document.getElementById('output').style.display      = tab === 'jobs'    ? '' : 'none';
+    document.getElementById('hiringOutput').style.display= tab === 'hiring'  ? '' : 'none';
+    document.getElementById('cvSection').style.display   = tab === 'cv'      ? '' : 'none';
+    document.getElementById('statsBar').style.display    = tab === 'jobs' && lastResults.length ? 'flex' : 'none';
   }
 
   function addKeyword(el) {
@@ -622,6 +714,85 @@
         </a>`
       ).join('') +
     `</div>`;
+  }
+
+  async function runCvSearch() {
+    const cvText     = document.getElementById('cvText').value.trim();
+    const location   = document.getElementById('cvLocation').value;
+    const experience = document.getElementById('cvExp').value;
+
+    if (!cvText) { alert('Please paste your CV text first.'); return; }
+
+    const btn = document.getElementById('cvBtn');
+    btn.disabled = true; btn.textContent = 'Analysing...';
+
+    document.getElementById('skillsFound').style.display = 'none';
+    document.getElementById('cvOutput').innerHTML = `
+      <div class="loading"><div class="spinner"></div>Extracting skills &amp; searching jobs...</div>`;
+
+    try {
+      const res  = await fetch('/api/cv-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cv_text: cvText, location, experience }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        document.getElementById('cvOutput').innerHTML =
+          `<div class="error-box">⚠️ ${escHtml(data.error)}</div>`;
+        return;
+      }
+
+      // Show extracted skill chips
+      if (data.keywords && data.keywords.length) {
+        document.getElementById('skillChips').innerHTML =
+          data.keywords.map(k => `<span class="skill-chip">${escHtml(k)}</span>`).join('');
+        document.getElementById('skillsFound').style.display = 'block';
+      }
+
+      // Reuse job results renderer
+      if (!data.results || !data.results.length) {
+        document.getElementById('cvOutput').innerHTML = `
+          <div class="empty"><div class="icon">📄</div>
+          <h3>No matching jobs found</h3>
+          <p>Try adding more skills to your CV text.</p></div>`;
+        return;
+      }
+
+      // Show stats
+      document.getElementById('cvOutput').innerHTML =
+        `<div class="stats-bar" style="display:flex;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+           <span class="stat-pill total">📊 ${data.total} results</span>
+           <span class="stat-pill linkedin">🔗 ${data.linkedin_count} LinkedIn</span>
+           <span class="stat-pill google">🔍 ${data.google_count} Google</span>
+         </div>` +
+        `<div class="results-wrap">` +
+        data.results.map(j => {
+          const srcLabel = j.source === 'linkedin' ? '🔗 LinkedIn' : '🔍 Google';
+          const srcClass = j.source === 'linkedin' ? 'badge-source-li' : 'badge-source-g';
+          return `
+            <a class="job-card" href="${j.url||'#'}" target="_blank" rel="noopener">
+              <div class="job-avatar">${initials(j.company||j.title)}</div>
+              <div class="job-body">
+                <div class="job-title">${escHtml(j.title)}</div>
+                ${j.company?`<div class="job-company">${escHtml(j.company)}</div>`:''}
+                <div class="job-meta">
+                  ${j.location?`<span class="badge badge-loc">📍 ${escHtml(j.location)}</span>`:''}
+                  <span class="badge ${srcClass}">${srcLabel}</span>
+                  ${j.posted?`<span class="badge badge-date">🕐 ${escHtml(j.posted)}</span>`:''}
+                </div>
+              </div>
+              <div class="job-arrow">›</div>
+            </a>`;
+        }).join('') + `</div>`;
+
+    } catch(err) {
+      document.getElementById('cvOutput').innerHTML =
+        `<div class="error-box">⚠️ Error: ${escHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '🎯 Find Matching Jobs';
+    }
   }
 
   function escHtml(str) {

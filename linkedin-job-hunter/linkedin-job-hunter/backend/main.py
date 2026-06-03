@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -23,6 +23,51 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
+
+
+# ─── CV keyword extraction ────────────────────────────────────────────────────
+
+TECH_SKILLS = [
+    # Languages
+    "Python","JavaScript","TypeScript","Java","Go","Golang","Rust","C++","C#","Ruby","PHP","Swift","Kotlin","Scala","R","MATLAB","Bash","Shell","PowerShell",
+    # Web
+    "React","Vue","Angular","Next.js","Nuxt","Svelte","Node.js","Express","FastAPI","Django","Flask","Laravel","Spring","ASP.NET","GraphQL","REST","gRPC",
+    # Cloud & DevOps
+    "AWS","Azure","GCP","Google Cloud","Kubernetes","K8s","Docker","Terraform","Ansible","Puppet","Chef","Helm","ArgoCD","Flux","Pulumi",
+    "CI/CD","Jenkins","GitHub Actions","GitLab CI","CircleCI","Travis CI","Bitbucket","Tekton",
+    "DevOps","SRE","Platform Engineer","Cloud Engineer","MLOps","DataOps","FinOps","GitOps",
+    # Observability
+    "Prometheus","Grafana","Datadog","New Relic","Dynatrace","Splunk","ELK","Elasticsearch","Kibana","Logstash","Jaeger","OpenTelemetry",
+    # Databases
+    "PostgreSQL","MySQL","MariaDB","MongoDB","Redis","Cassandra","DynamoDB","BigQuery","Snowflake","Oracle","SQL Server","SQLite","InfluxDB","TimescaleDB",
+    # Data
+    "Apache Spark","Kafka","Airflow","dbt","Hadoop","Flink","Databricks","Pandas","NumPy","Data Engineering","Data Science","ETL","ELT",
+    # ML/AI
+    "Machine Learning","Deep Learning","TensorFlow","PyTorch","scikit-learn","Keras","NLP","LLM","OpenAI","Hugging Face","Computer Vision","RAG",
+    # Security
+    "DevSecOps","Security","Cybersecurity","SIEM","SOC","Penetration Testing","IAM","Zero Trust","Vault",
+    # Networking & Infra
+    "Linux","Nginx","HAProxy","Istio","Envoy","Service Mesh","VPN","BGP","DNS","TCP/IP",
+    # Methodologies
+    "Agile","Scrum","Kanban","SAFe","ITIL","SLA","SLO","SLI",
+    # Job titles (to detect seniority / domain)
+    "DevOps Engineer","Cloud Architect","Solutions Architect","Data Engineer","Data Scientist",
+    "Backend Developer","Frontend Developer","Full Stack","Software Engineer","Platform Engineer",
+    "Site Reliability","Security Engineer","Network Engineer","System Administrator",
+]
+
+def extract_cv_keywords(cv_text: str) -> list[str]:
+    """Extract recognisable tech skills from raw CV text using word-boundary matching."""
+    found = []
+    seen_lower = set()
+    for skill in TECH_SKILLS:
+        pattern = r'(?i)\b' + re.escape(skill) + r'\b'
+        if re.search(pattern, cv_text):
+            key = skill.lower()
+            if key not in seen_lower:
+                seen_lower.add(key)
+                found.append(skill)
+    return found
 
 
 # ─── Google search (site:linkedin.com/jobs) ───────────────────────────────────
@@ -265,6 +310,43 @@ async def hiring_posts(
         "total": len(results),
     }
 
+
+
+@app.post("/api/cv-search")
+async def cv_search(payload: dict = Body(...)):
+    cv_text   = payload.get("cv_text", "").strip()
+    location   = payload.get("location", "Tunisia")
+    experience = payload.get("experience", "")
+
+    if not cv_text:
+        return {"error": "CV text is empty", "keywords": [], "results": [], "total": 0}
+
+    keywords = extract_cv_keywords(cv_text)
+    if not keywords:
+        return {
+            "error": "No recognisable tech skills found. Try pasting more of your CV.",
+            "keywords": [],
+            "results": [],
+            "total": 0,
+        }
+
+    # Use top 6 most specific keywords for search
+    search_kw = keywords[:6]
+
+    google_task   = search_google(search_kw, location)
+    linkedin_task = search_linkedin(search_kw, location, experience)
+    google_results, linkedin_results = await asyncio.gather(google_task, linkedin_task)
+
+    combined = linkedin_results + google_results
+    combined = deduplicate(combined)
+
+    return {
+        "keywords":       keywords,          # all extracted skills
+        "results":        combined,
+        "total":          len(combined),
+        "linkedin_count": len(linkedin_results),
+        "google_count":   len(google_results),
+    }
 
 
 # ─── Serve frontend ───────────────────────────────────────────────────────────
