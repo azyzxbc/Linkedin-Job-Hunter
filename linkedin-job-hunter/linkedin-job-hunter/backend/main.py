@@ -127,12 +127,9 @@ async def search_linkedin(keywords: list[str], location: str, experience: str) -
 
 # ─── LinkedIn hiring posts (recruiter/people posts) ──────────────────────────
 
-async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
-    query_parts = keywords + ([location] if location else [])
-    query = " ".join(query_parts)
-    search_query = f'site:linkedin.com/posts OR site:linkedin.com/in "hiring" OR "we are hiring" OR "looking for" {query}'
-    url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}&num=30&hl=en"
-
+async def _google_hiring_query(search_query: str) -> list[dict]:
+    """Run a single Google search and return parsed hiring post results."""
+    url = f"https://www.google.com/search?q={urllib.parse.quote(search_query)}&num=20&hl=en"
     results = []
     try:
         async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
@@ -140,8 +137,8 @@ async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
             soup = BeautifulSoup(resp.text, "html.parser")
 
             for g in soup.select("div.g"):
-                title_el  = g.select_one("h3")
-                link_el   = g.select_one("a")
+                title_el   = g.select_one("h3")
+                link_el    = g.select_one("a")
                 snippet_el = g.select_one("div.VwiC3b, span.aCOpRe, div[data-sncf]")
 
                 if not title_el or not link_el:
@@ -150,21 +147,13 @@ async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
                 href = link_el.get("href", "")
                 if "linkedin.com" not in href:
                     continue
-                # Only personal posts / profile pages
-                if not any(p in href for p in ["/posts/", "/in/", "/pulse/"]):
-                    continue
 
                 title   = title_el.get_text(strip=True)
                 snippet = snippet_el.get_text(strip=True) if snippet_el else ""
 
-                # Try to extract person name from title (e.g. "John Doe on LinkedIn: ...")
-                person = ""
-                m = re.match(r"^([^|·\-\n]+?)\s+(on LinkedIn|–\s*LinkedIn|posted|shared)", title, re.IGNORECASE)
-                if m:
-                    person = m.group(1).strip()
-                else:
-                    title_clean = re.sub(r"\s*[|\-]\s*LinkedIn.*$", "", title).strip()
-                    person = title_clean
+                # Extract person name from title e.g. "John Doe on LinkedIn: We are hiring..."
+                m = re.match(r"^(.+?)\s+(on LinkedIn|posted|shared)", title, re.IGNORECASE)
+                person = m.group(1).strip() if m else re.sub(r"\s*[|\-]\s*LinkedIn.*$", "", title).strip()
 
                 results.append({
                     "person":  person,
@@ -174,9 +163,28 @@ async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
                     "posted":  extract_date_from_snippet(snippet),
                 })
     except Exception as e:
-        print(f"Hiring posts search error: {e}")
-
+        print(f"Hiring search error ({search_query[:40]}): {e}")
     return results
+
+
+async def search_hiring_posts(keywords: list[str], location: str) -> list[dict]:
+    query = " ".join(keywords + ([location] if location else []))
+
+    # Two separate clean queries — Google handles these much better than OR site:
+    q1 = f'site:linkedin.com/posts hiring {query}'
+    q2 = f'site:linkedin.com/in hiring {query}'
+
+    r1, r2 = await asyncio.gather(_google_hiring_query(q1), _google_hiring_query(q2))
+
+    combined = r1 + r2
+    # Deduplicate by URL
+    seen, out = set(), []
+    for r in combined:
+        key = r["url"].split("?")[0]
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
