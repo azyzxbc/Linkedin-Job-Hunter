@@ -333,23 +333,40 @@
     box-shadow: var(--shadow);
   }
   .cv-card label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 8px; color: var(--text); }
-  .cv-card textarea {
+  /* Drop zone */
+  .drop-zone {
     width: 100%;
-    min-height: 180px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 13px;
-    font-family: inherit;
-    resize: vertical;
-    outline: none;
-    transition: border 0.15s;
+    border: 2px dashed #c8d8f0;
+    border-radius: 10px;
+    padding: 36px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
     background: var(--bg);
-    color: var(--text);
-    line-height: 1.6;
+    position: relative;
   }
-  .cv-card textarea:focus { border-color: var(--accent); }
-  .cv-card textarea::placeholder { color: #aaa; }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: #7c3aed;
+    background: #f5f3ff;
+  }
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0;
+    opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-icon { font-size: 36px; margin-bottom: 10px; }
+  .drop-title { font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .drop-sub { font-size: 12px; color: var(--muted); }
+  .drop-file-name {
+    margin-top: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #7c3aed;
+    background: #ede9fe;
+    border-radius: 6px;
+    padding: 6px 14px;
+    display: inline-block;
+  }
+
   .cv-actions { display: flex; gap: 10px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
   .cv-actions select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--surface); color: var(--text); outline: none; }
   .btn-cv {
@@ -461,12 +478,20 @@
   <!-- CV Match section -->
   <div id="cvSection" style="display:none;">
     <div class="cv-card">
-      <label for="cvText">📎 Paste your CV / Resume text here</label>
-      <textarea id="cvText" placeholder="Copy and paste the full text of your CV here...
-Example:
-  DevOps Engineer with 4 years experience
-  Skills: AWS, Kubernetes, Terraform, Docker, CI/CD, Python
-  Worked with GitHub Actions, Grafana, Prometheus..."></textarea>
+      <label>📄 Upload your CV (PDF or DOCX)</label>
+
+      <div class="drop-zone" id="dropZone"
+           ondragover="event.preventDefault(); this.classList.add('dragover')"
+           ondragleave="this.classList.remove('dragover')"
+           ondrop="handleDrop(event)">
+        <input type="file" id="cvFile" accept=".pdf,.docx"
+               onchange="handleFileSelect(this.files[0])" />
+        <div class="drop-icon">📂</div>
+        <div class="drop-title">Drag &amp; drop your CV here</div>
+        <div class="drop-sub">or click to browse &nbsp;&bull;&nbsp; PDF or DOCX</div>
+        <div class="drop-file-name" id="dropFileName" style="display:none;"></div>
+      </div>
+
       <div class="cv-actions">
         <select id="cvLocation">
           <option value="Tunisia">📍 Tunisia</option>
@@ -487,7 +512,6 @@ Example:
         <div id="skillChips"></div>
       </div>
     </div>
-    <div id="cvOutput"></div>
   </div>
 
 
@@ -716,12 +740,29 @@ Example:
     `</div>`;
   }
 
+  let selectedCvFile = null;
+
+  function handleFileSelect(file) {
+    if (!file) return;
+    selectedCvFile = file;
+    const el = document.getElementById('dropFileName');
+    el.textContent = '📄 ' + file.name;
+    el.style.display = 'inline-block';
+    document.getElementById('dropZone').classList.remove('dragover');
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('dropZone').classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  }
+
   async function runCvSearch() {
-    const cvText     = document.getElementById('cvText').value.trim();
     const location   = document.getElementById('cvLocation').value;
     const experience = document.getElementById('cvExp').value;
 
-    if (!cvText) { alert('Please paste your CV text first.'); return; }
+    if (!selectedCvFile) { alert('Please upload your CV file (PDF or DOCX).'); return; }
 
     const btn = document.getElementById('cvBtn');
     btn.disabled = true; btn.textContent = 'Analysing...';
@@ -731,11 +772,12 @@ Example:
       <div class="loading"><div class="spinner"></div>Extracting skills &amp; searching jobs...</div>`;
 
     try {
-      const res  = await fetch('/api/cv-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cv_text: cvText, location, experience }),
-      });
+      const fd = new FormData();
+      fd.append('file', selectedCvFile);
+      fd.append('location', location);
+      fd.append('experience', experience);
+
+      const res  = await fetch('/api/cv-search', { method: 'POST', body: fd });
       const data = await res.json();
 
       if (data.error) {
@@ -744,23 +786,20 @@ Example:
         return;
       }
 
-      // Show extracted skill chips
       if (data.keywords && data.keywords.length) {
         document.getElementById('skillChips').innerHTML =
           data.keywords.map(k => `<span class="skill-chip">${escHtml(k)}</span>`).join('');
         document.getElementById('skillsFound').style.display = 'block';
       }
 
-      // Reuse job results renderer
       if (!data.results || !data.results.length) {
         document.getElementById('cvOutput').innerHTML = `
           <div class="empty"><div class="icon">📄</div>
           <h3>No matching jobs found</h3>
-          <p>Try adding more skills to your CV text.</p></div>`;
+          <p>Try a different location or experience level.</p></div>`;
         return;
       }
 
-      // Show stats
       document.getElementById('cvOutput').innerHTML =
         `<div class="stats-bar" style="display:flex;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
            <span class="stat-pill total">📊 ${data.total} results</span>

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query, Body
+from fastapi import FastAPI, Query, Body, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -8,6 +8,18 @@ import asyncio
 import re
 from datetime import datetime
 import urllib.parse
+import io
+
+# PDF / DOCX parsing
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    from docx import Document as DocxDocument
+except ImportError:
+    DocxDocument = None
 
 app = FastAPI(title="LinkedIn Job Hunter")
 
@@ -68,6 +80,27 @@ def extract_cv_keywords(cv_text: str) -> list[str]:
                 seen_lower.add(key)
                 found.append(skill)
     return found
+
+
+def extract_pdf_text(content: bytes) -> str:
+    if PdfReader is None:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    except Exception as e:
+        print(f"PDF parse error: {e}")
+        return ""
+
+def extract_docx_text(content: bytes) -> str:
+    if DocxDocument is None:
+        return ""
+    try:
+        doc = DocxDocument(io.BytesIO(content))
+        return "\n".join(p.text for p in doc.paragraphs)
+    except Exception as e:
+        print(f"DOCX parse error: {e}")
+        return ""
 
 
 # ─── Google search (site:linkedin.com/jobs) ───────────────────────────────────
@@ -312,36 +345,44 @@ async def hiring_posts(
 
 
 
-@app.post("/api/cv-search")
-async def cv_search(payload: dict = Body(...)):
-    cv_text   = payload.get("cv_text", "").strip()
-    location   = payload.get("location", "Tunisia")
-    experience = payload.get("experience", "")
 
+@app.post("/api/cv-search")
+async def cv_search(
+    file:       UploadFile = File(...),
+    location:   str        = Form("Tunisia"),
+    experience: str        = Form(""),
+):
+    filename = (file.filename or "").lower()
+    if not (filename.endswith(".pdf") or filename.endswith(".docx")):
+        return {"error": "Only PDF and DOCX files are supported.", "keywords": [], "results": [], "total": 0}
+
+    content = await file.read()
+
+    if filename.endswith(".pdf"):
+        cv_text = extract_pdf_text(content)
+    else:
+        cv_text = extract_docx_text(content)
+
+    cv_text = cv_text.strip()
     if not cv_text:
-        return {"error": "CV text is empty", "keywords": [], "results": [], "total": 0}
+        return {"error": "Could not extract text from the file.", "keywords": [], "results": [], "total": 0}
 
     keywords = extract_cv_keywords(cv_text)
     if not keywords:
         return {
-            "error": "No recognisable tech skills found. Try pasting more of your CV.",
-            "keywords": [],
-            "results": [],
-            "total": 0,
+            "error": "No recognisable tech skills found in your CV. Make sure your file contains readable text.",
+            "keywords": [], "results": [], "total": 0,
         }
 
-    # Use top 6 most specific keywords for search
     search_kw = keywords[:6]
-
     google_task   = search_google(search_kw, location)
     linkedin_task = search_linkedin(search_kw, location, experience)
     google_results, linkedin_results = await asyncio.gather(google_task, linkedin_task)
 
-    combined = linkedin_results + google_results
-    combined = deduplicate(combined)
+    combined = deduplicate(linkedin_results + google_results)
 
     return {
-        "keywords":       keywords,          # all extracted skills
+        "keywords":       keywords,
         "results":        combined,
         "total":          len(combined),
         "linkedin_count": len(linkedin_results),
