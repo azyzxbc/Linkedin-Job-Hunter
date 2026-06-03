@@ -113,6 +113,46 @@
   }
   .filters-row select:focus { border-color: var(--accent); }
 
+  /* ── Date range block ── */
+  .date-range-block {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .date-range-block .cal-icon { font-size: 16px; }
+  .date-range-block label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .date-range-block input[type=date] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    outline: none;
+    cursor: pointer;
+    transition: border 0.15s;
+  }
+  .date-range-block input[type=date]:focus { border-color: var(--accent); }
+  .date-range-sep { font-size: 12px; color: var(--muted); }
+  .date-range-clear {
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: none;
+    transition: all 0.12s;
+    margin-left: auto;
+  }
+  .date-range-clear:hover { background: #fee; color: #c62828; border-color: #ffcdd2; }
+
   .quick-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 
   .tag {
@@ -272,6 +312,16 @@
       </select>
     </div>
 
+    <div class="date-range-block">
+      <span class="cal-icon">📅</span>
+      <label for="dateFrom">From</label>
+      <input type="date" id="dateFrom" onchange="applyDateFilter()" />
+      <span class="date-range-sep">→</span>
+      <label for="dateTo">To</label>
+      <input type="date" id="dateTo" onchange="applyDateFilter()" />
+      <button class="date-range-clear" onclick="clearDates()">✕ Clear</button>
+    </div>
+
     <div class="quick-tags">
       <span class="tag-label">Quick add:</span>
       <span class="tag" onclick="addKeyword(this)">DevOps</span>
@@ -343,7 +393,7 @@
 
       lastResults = data.results || [];
       renderStats(data);
-      renderResults(lastResults);
+      applyDateFilter();
     } catch (err) {
       document.getElementById('output').innerHTML = `
         <div class="error-box">
@@ -365,6 +415,49 @@
       <span class="stat-pill linkedin">🔗 ${data.linkedin_count} from LinkedIn</span>
       <span class="stat-pill google">🔍 ${data.google_count} from Google</span>
     `;
+  }
+
+  function postedToDate(posted) {
+    if (!posted) return null;
+    // ISO date from LinkedIn e.g. "2026-05-30"
+    if (/^\d{4}-\d{2}-\d{2}/.test(posted)) {
+      return new Date(posted);
+    }
+    // Text from Google e.g. "3 days ago", "2 weeks ago", "1 month ago"
+    const m = posted.match(/(\d+)\s+(hour|day|week|month)/i);
+    if (m) {
+      const n = parseInt(m[1]);
+      const unit = m[2].toLowerCase();
+      const ms = unit === 'hour'  ? n * 3600000
+               : unit === 'day'   ? n * 86400000
+               : unit === 'week'  ? n * 7 * 86400000
+               : unit === 'month' ? n * 30 * 86400000 : 0;
+      return new Date(Date.now() - ms);
+    }
+    return null;
+  }
+
+  function clearDates() {
+    document.getElementById('dateFrom').value = '';
+    document.getElementById('dateTo').value = '';
+    applyDateFilter();
+  }
+
+  function applyDateFilter() {
+    const fromVal = document.getElementById('dateFrom').value;
+    const toVal   = document.getElementById('dateTo').value;
+    const fromDate = fromVal ? new Date(fromVal) : null;
+    const toDate   = toVal   ? new Date(toVal + 'T23:59:59') : null;
+
+    const filtered = lastResults.filter(j => {
+      if (!fromDate && !toDate) return true;
+      const d = postedToDate(j.posted);
+      if (!d) return true; // no date info → always show
+      if (fromDate && d < fromDate) return false;
+      if (toDate   && d > toDate)   return false;
+      return true;
+    });
+    renderResults(filtered);
   }
 
   function initials(str) {
